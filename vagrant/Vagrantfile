@@ -1,0 +1,41 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+# Using yaml to load external configuration files
+require 'yaml'
+
+Vagrant.configure("2") do |config|
+  # Using the hostmanager vagrant plugin to update the host files
+  config.hostmanager.enabled = true
+  config.hostmanager.manage_host = true
+  config.hostmanager.manage_guest = true
+  config.hostmanager.ignore_private_ip = false
+  servers = YAML.load_file("hosts.yml")['hosts']
+  servers.each do |servers|
+    config.vm.define servers["hostname"] do |srv|
+      srv.vm.box = servers["box"] # Speciy the name of the Vagrant box file to use
+      srv.vm.hostname = servers["hostname"] # Set the hostname of the VM
+      srv.vm.network "private_network", ip: servers["ip"]     # , :adapter=>2  # Add a second adapter with a specified IP
+      srv.vm.network :forwarded_port, guest: 22, host: servers["port"] # Add a port forwarding rule
+      srv.vm.provision :shell, inline: "useradd -G wheel dan"
+      srv.vm.provision :shell, inline: "echo test | passwd --stdin dan"
+      srv.vm.provision :shell, inline: "sed -i'' '/^127.0.0.1\\t#{srv.vm.hostname}\\t#{srv.vm.hostname}$/d' /etc/hosts"
+      srv.vm.provision :shell, inline: "sysctl kernel.hostname=#{srv.vm.hostname}"
+      srv.vm.provision :shell, inline: "sed -i 's/PEERDNS=yes/PEERDNS=no/g' /etc/sysconfig/network-scripts/ifcfg-eth0"
+      srv.vm.provision :shell, inline: "echo #{srv.vm.hostname} >> /etc/hostname"
+      
+     
+      srv.vm.provider :virtualbox do |vb|
+        vb.name = servers["hostname"] # Name of the VM in VirtualBox
+        vb.cpus = servers["cpus"] # How many CPUs to allocate to the VM
+        vb.memory = servers["memory"] # How much memory to allocate to the VM
+        vb.customize ["modifyvm", :id, "--cpuexecutioncap", "50"]  # Limit to VM to 50% of available CPU
+ 	      file_to_disk = "disk-#{vb.name}.vdi"
+        unless File.exist?(file_to_disk)
+          # 2 GB
+          vb.customize ['createhd', '--filename', file_to_disk, '--size', 2 * 1024]
+        end
+        vb.customize ['storageattach', :id, '--storagectl', 'SATA Controller', '--port', 1, '--device', 0, '--type', 'hdd', '--medium', file_to_disk]
+      end
+    end
+  end
+end
